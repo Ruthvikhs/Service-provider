@@ -3,6 +3,7 @@ import LoginPage     from './pages/Login';
 import Onboarding    from './pages/Onboarding';
 import Portal        from './pages/Portal';
 import { decodeJWT } from './utils';
+import { getProviderByOwner } from './api';
 import './index.css';
 
 function loadFromStorage(key, fallback = null) {
@@ -17,15 +18,30 @@ export default function App() {
     return t ? decodeJWT(t) : null;
   });
   const [provider, setProvider] = useState(() => loadFromStorage('mm_provider'));
+  const [checking, setChecking] = useState(false);
 
-  const handleLogin = (responseData) => {
-    // responseData shape depends on your auth service.
-    // Expects: { token, user } or { data: { token, user } }
-    const tk   = responseData.token || responseData.data?.token;
-    const usr  = responseData.user  || responseData.data?.user || decodeJWT(tk);
+  const handleLogin = async (responseData) => {
+    const tk  = responseData.token || responseData.data?.token;
+    const usr = responseData.user  || responseData.data?.user || decodeJWT(tk);
     localStorage.setItem('mm_token', tk);
     setToken(tk);
     setUser(usr);
+
+    // After login, check if this vendor already has a provider profile so
+    // returning vendors go straight to Portal instead of Onboarding.
+    setChecking(true);
+    try {
+      const res      = await getProviderByOwner(usr._id);
+      const existing = Array.isArray(res.data) ? res.data[0] : res.data;
+      if (existing?._id) {
+        localStorage.setItem('mm_provider', JSON.stringify(existing));
+        setProvider(existing);
+      }
+    } catch {
+      // No provider yet — Onboarding will handle it
+    } finally {
+      setChecking(false);
+    }
   };
 
   const handleLogout = () => {
@@ -44,6 +60,18 @@ export default function App() {
   // Not logged in
   if (!token || !user) {
     return <LoginPage onLogin={handleLogin} />;
+  }
+
+  // Checking for existing provider right after login
+  if (checking) {
+    return (
+      <div className="mm-app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <span className="mm-spin" style={{ width: 32, height: 32, borderWidth: 3 }} />
+          <div style={{ marginTop: 16, fontSize: 13, color: 'var(--mm-t3)' }}>Loading your profile…</div>
+        </div>
+      </div>
+    );
   }
 
   // Logged in but no provider profile yet → onboarding

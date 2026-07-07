@@ -72,11 +72,17 @@ export default function Onboarding({ user, onComplete }) {
   const [capacityMin, setCapacityMin]   = useState('');
   const [capacityMax, setCapacityMax]   = useState('');
 
-  // ── Step 4 state
-  const [bizName,    setBizName]        = useState('');
-  const [description,setDescription]   = useState('');
-  const [city,       setCity]           = useState('');
-  const [area,       setArea]           = useState('');
+  // ── Step 4 state — location
+  const [bizName,     setBizName]     = useState('');
+  const [description, setDescription] = useState('');
+  const [addressLine, setAddressLine] = useState('');
+  const [area,        setArea]        = useState('');
+  const [city,        setCity]        = useState('');
+  const [stateName,   setStateName]   = useState('');
+  const [pincode,     setPincode]     = useState('');
+  const [coords,      setCoords]      = useState(null); // { lat, lng } — required
+  const [gpsLoading,  setGpsLoading]  = useState(false);
+  const [gpsError,    setGpsError]    = useState('');
 
   // ── Step 5 state
   const [photoFiles, setPhotoFiles]     = useState([]);
@@ -86,6 +92,48 @@ export default function Onboarding({ user, onComplete }) {
 
   const goNext = () => setStep(s => s + 1);
   const goBack = () => { setError(''); setStep(s => s - 1); };
+
+  // ── GPS detect + reverse geocode ─────────────────────────────────────────────
+  const detectLocation = () => {
+    if (!navigator.geolocation) {
+      setGpsError('Your browser does not support location access.');
+      return;
+    }
+    setGpsLoading(true);
+    setGpsError('');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        try {
+          const res  = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=en`,
+            { headers: { 'User-Agent': 'MaduveMane/1.0 (venue-booking-app)' } }
+          );
+          const data = await res.json();
+          const a    = data.address || {};
+          const street = [a.house_number, a.road].filter(Boolean).join(', ');
+          setAddressLine(street || '');
+          setArea(a.neighbourhood || a.suburb || a.quarter || '');
+          setCity(a.city || a.town || a.village || a.county || '');
+          setStateName(a.state || '');
+          setPincode(a.postcode || '');
+        } catch {
+          setGpsError('Location detected but could not fetch address — please fill in manually.');
+        }
+        setCoords({ lat, lng });
+        setGpsLoading(false);
+      },
+      (err) => {
+        setGpsLoading(false);
+        if (err.code === 1 /* PERMISSION_DENIED */) {
+          setGpsError('Location access was denied. Please allow location access in your browser settings and try again.');
+        } else {
+          setGpsError('Could not detect location. Please try again or fill in the address manually.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  };
 
   // ── Step validators
   const validateStep = () => {
@@ -100,6 +148,7 @@ export default function Onboarding({ user, onComplete }) {
     if (step === 3) {
       if (!bizName.trim()) { setError('Please enter your business name.'); return false; }
       if (!city.trim())    { setError('Please enter your city.'); return false; }
+      if (!coords)         { setError('Please detect your location using the GPS button above — this is required to list your venue.'); return false; }
     }
     return true;
   };
@@ -150,6 +199,9 @@ export default function Onboarding({ user, onComplete }) {
         location: {
           city: city.trim(),
           area: area.trim() || undefined,
+          geo: coords
+            ? { type: 'Point', coordinates: [coords.lng, coords.lat] }
+            : undefined,
         },
         pricing: {
           base_price: Number(basePrice),
@@ -408,7 +460,7 @@ export default function Onboarding({ user, onComplete }) {
                   Where are you based?
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--mm-t2)' }}>
-                  Help customers find you.
+                  We need your exact location to show customers where you are.
                 </div>
               </div>
 
@@ -422,19 +474,101 @@ export default function Onboarding({ user, onComplete }) {
                 <label className="mm-label">Short description <span style={{ color: 'var(--mm-t3)', fontWeight: 400 }}>(optional)</span></label>
                 <textarea className="mm-input mm-textarea"
                   placeholder="Tell customers what makes you special…"
-                  value={description} onChange={e => setDescription(e.target.value)} rows={3} />
+                  value={description} onChange={e => setDescription(e.target.value)} rows={2} />
+              </div>
+
+              {/* GPS button */}
+              <div style={{
+                background: coords ? 'rgba(74,157,97,.07)' : 'var(--mm-surface-2)',
+                border: `1px solid ${coords ? 'rgba(74,157,97,.3)' : 'var(--mm-border)'}`,
+                borderRadius: 12, padding: '16px 18px', marginBottom: 18,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--mm-t3)', marginBottom: 10 }}>
+                  Venue GPS location <span style={{ color: 'var(--mm-red)', fontWeight: 700 }}>*</span>
+                </div>
+
+                {coords ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(74,157,97,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--mm-green)" strokeWidth="2.5" width={15} height={15}>
+                          <path d="M20 6 9 17l-5-5"/>
+                        </svg>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mm-green)' }}>Location detected</div>
+                        <div style={{ fontSize: 11, color: 'var(--mm-t3)', marginTop: 1 }}>
+                          {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={detectLocation}
+                      className="mm-btn mm-btn-ghost"
+                      style={{ fontSize: 12, padding: '7px 12px', flexShrink: 0 }}
+                      disabled={gpsLoading}
+                    >
+                      Re-detect
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={detectLocation}
+                    className="mm-btn mm-btn-primary"
+                    style={{ width: '100%', gap: 8, padding: '12px' }}
+                    disabled={gpsLoading}
+                  >
+                    {gpsLoading ? <span className="mm-spin" /> : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={16} height={16}>
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+                        <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/>
+                      </svg>
+                    )}
+                    {gpsLoading ? 'Detecting location…' : 'Detect my location'}
+                  </button>
+                )}
+
+                {gpsError && (
+                  <div style={{ fontSize: 12, color: 'var(--mm-red)', marginTop: 10, fontWeight: 500 }}>
+                    {gpsError}
+                  </div>
+                )}
+              </div>
+
+              {/* Full address fields — shown always, auto-filled by GPS */}
+              <div className="mm-form-group">
+                <label className="mm-label">Street address</label>
+                <input type="text" className="mm-input"
+                  placeholder="e.g. 12, MG Road"
+                  value={addressLine} onChange={e => setAddressLine(e.target.value)} />
               </div>
 
               <div className="mm-row-2">
+                <div className="mm-form-group">
+                  <label className="mm-label">Area / Locality</label>
+                  <input type="text" className="mm-input" placeholder="e.g. Koramangala"
+                    value={area} onChange={e => setArea(e.target.value)} />
+                </div>
                 <div className="mm-form-group">
                   <label className="mm-label">City <span>*</span></label>
                   <input type="text" className="mm-input" placeholder="e.g. Bengaluru"
                     value={city} onChange={e => setCity(e.target.value)} />
                 </div>
-                <div className="mm-form-group">
-                  <label className="mm-label">Area / Locality <span style={{ color: 'var(--mm-t3)', fontWeight: 400 }}>(optional)</span></label>
-                  <input type="text" className="mm-input" placeholder="e.g. Koramangala"
-                    value={area} onChange={e => setArea(e.target.value)} />
+              </div>
+
+              <div className="mm-row-2">
+                <div className="mm-form-group" style={{ marginBottom: 0 }}>
+                  <label className="mm-label">State</label>
+                  <input type="text" className="mm-input" placeholder="e.g. Karnataka"
+                    value={stateName} onChange={e => setStateName(e.target.value)} />
+                </div>
+                <div className="mm-form-group" style={{ marginBottom: 0 }}>
+                  <label className="mm-label">Pincode</label>
+                  <input type="text" className="mm-input" placeholder="e.g. 560034"
+                    value={pincode} onChange={e => setPincode(e.target.value)} />
                 </div>
               </div>
             </div>
